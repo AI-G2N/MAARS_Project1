@@ -1,6 +1,107 @@
 import streamlit as st
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, TextClassificationPipeline
+from huggingface_hub import login
+from dotenv import load_dotenv
+import os
 
-st.title("🎈 My new app")
-st.write(
-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
-)
+# Load environment variables from a .env file
+load_dotenv()
+
+# Retrieve the Hugging Face token from environment variables (if needed)
+hf_token = os.getenv("HF_TOKEN")
+
+# Authenticating with Hugging Face Hub (if necessary)
+if hf_token:
+    login(token=hf_token)
+
+# Load the toxic comment model and tokenizer
+toxic_model_path = "martin-ha/toxic-comment-model"
+toxic_tokenizer = AutoTokenizer.from_pretrained(toxic_model_path, revision="main")
+toxic_model = AutoModelForSequenceClassification.from_pretrained(toxic_model_path, revision="main")
+toxic_pipeline = TextClassificationPipeline(model=toxic_model, tokenizer=toxic_tokenizer)
+
+# Load the sentiment analysis model and tokenizer
+sentiment_model_name = "distilbert-base-uncased-finetuned-sst-2-english"
+sentiment_tokenizer = AutoTokenizer.from_pretrained(sentiment_model_name, revision="main")
+sentiment_model = AutoModelForSequenceClassification.from_pretrained(sentiment_model_name, revision="main")
+sentiment_pipeline = TextClassificationPipeline(model=sentiment_model, tokenizer=sentiment_tokenizer)
+
+# Function to check if a sentence is in English
+def is_english(sentence):
+    try:
+        sentence.encode(encoding='utf-8').decode('ascii')
+    except UnicodeDecodeError:
+        return False
+    else:
+        return True
+
+# Function to check toxicity
+def check_toxicity(sentences):
+    results = []
+    for sentence in sentences:
+        analysis = toxic_pipeline(sentence)
+        is_toxic = analysis[0]['label'] == 'toxic'
+        toxic_score = int(analysis[0]['score'] * 100) if is_toxic else 0
+        results.append((sentence, is_toxic, toxic_score))
+    return results
+
+# Function to perform sentiment analysis
+def analyze_sentiment(sentences):
+    results = []
+    analysis_results = sentiment_pipeline(sentences)
+    for sentence, analysis in zip(sentences, analysis_results):
+        sentiment = analysis['label']
+        results.append((sentence, sentiment))
+    return results
+
+# Streamlit UI
+st.title("Feedback Analysis")
+
+# Input for sentences
+sentences_input = st.text_area("Enter sentences (separate by new lines):")
+sentences = sentences_input.split('\n')
+
+# Analyze button
+if st.button("Analyze"):
+    if sentences:
+        # Check if sentences are in English, translate if necessary
+        translated_sentences = []
+        for sentence in sentences:
+            if is_english(sentence):
+                translated_sentences.append(sentence)
+            else:
+                translated_sentence = sentence  # Replace with translation logic if needed
+                translated_sentences.append(translated_sentence)
+
+        # Perform toxicity check
+        toxicity_results = check_toxicity(translated_sentences)
+
+        toxic_comments = []
+        non_toxic_sentences = []
+
+        for sentence, is_toxic, toxic_score in toxicity_results:
+            if is_toxic:
+                toxic_comments.append((sentence, toxic_score))
+            else:
+                non_toxic_sentences.append(sentence)
+
+        # Perform sentiment analysis on non-toxic sentences
+        sentiment_results = analyze_sentiment(non_toxic_sentences)
+
+        # Display results
+        if toxic_comments:
+            st.write("Toxic Comments:")
+            for sentence, toxic_score in toxic_comments:
+                st.write(f"Sentence: {sentence}")
+                st.write(f"Toxic Score: {toxic_score}%")
+                st.write("Comment has toxic content. Please rewrite the comment.")
+                st.write("---")
+
+        if sentiment_results:
+            st.write("Sentiment Analysis Results:")
+            for sentence, sentiment in sentiment_results:
+                st.write(f"Sentence: {sentence}")
+                st.write(f"Sentiment: {sentiment}")
+                st.write("---")
+    else:
+        st.write("Please enter at least one sentence.")
